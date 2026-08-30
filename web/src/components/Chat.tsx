@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Message } from "./Message";
-import { streamChat, fileToAttached, type ChatImagePart, type CitationEvent, type McpEvent, type UsageEvent } from "../lib/streamClient";
-import { type ChatMessage, type AttachedImage, type McpCall, type McpTools, newId } from "../lib/types";
+import { streamChat, fileToAttached, type ChatImagePart, type CitationEvent, type McpEvent, type ActivityEvent, type UsageEvent } from "../lib/streamClient";
+import { type ChatMessage, type AttachedImage, type ActivityItem, newId } from "../lib/types";
 import { loadActive } from "../lib/connectionProfile";
 import { saveConversation, makeTitle } from "../lib/historyDb";
 import { recordCall } from "../lib/rateMeter";
@@ -35,7 +35,8 @@ export function Chat({ ready, readyHint, conversationId, initialMessages, system
         onImage: (img: ChatImagePart) => patch(assistantId, (m) => ({ ...m, images: [...(m.images ?? []), img] })),
         onReasoning: (d) => patch(assistantId, (m) => ({ ...m, reasoning: (m.reasoning ?? "") + d })),
         onCitation: (c: CitationEvent) => patch(assistantId, (m) => ({ ...m, citations: [...(m.citations ?? []), { kind: c.kind, title: c.title, url: c.url, filename: c.filename }] })),
-        onMcp: (e: McpEvent) => patch(assistantId, (m) => applyMcp(m, e)),
+        onMcp: (_e: McpEvent) => {}, // timeline is driven by activity events
+        onActivity: (e: ActivityEvent) => patch(assistantId, (m) => applyActivity(m, e)),
         onUsage: (u: UsageEvent) => patch(assistantId, (m) => ({ ...m, usage: { ...u } })),
         onDone: () => {}, onError: (msg) => patch(assistantId, (m) => ({ ...m, content: `⚠️ ${msg}`, error: true })),
       }, ac.signal);
@@ -48,7 +49,7 @@ export function Chat({ ready, readyHint, conversationId, initialMessages, system
     <div className="chat">
       <div className="messages" onDragOver={(e) => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={onDrop}>
         {dragOver && <div className="drop-overlay">Drop images here 📎</div>}
-        {messages.length === 0 && (<div className="empty"><h3>👋 Start chatting</h3><p>You'll see 🧠 reasoning, 🧰 tools, 🔌 MCP calls (with args), 📎 sources and 🎫 tokens.</p></div>)}
+        {messages.length === 0 && (<div className="empty"><h3>👋 Start chatting</h3><p>You'll see a live 🧭 activity timeline (thinking, tools, searching), 📎 sources and 🎫 tokens.</p></div>)}
         {messages.map((m, i) => (<Message key={m.id} message={m} isStreaming={streaming && i === messages.length - 1 && m.role === "assistant"} />))}
         <div ref={bottomRef} />
       </div>
@@ -63,37 +64,15 @@ export function Chat({ ready, readyHint, conversationId, initialMessages, system
   );
 }
 
-function applyMcp(m: ChatMessage, e: McpEvent): ChatMessage {
-  // Discovered tools list.
-  if (e.phase === "list") {
-    const groups: McpTools[] = [...(m.mcpTools ?? [])];
-    groups.push({ server: e.server ?? null, tools: Array.isArray(e.tools) ? e.tools : [] });
-    return { ...m, mcpTools: groups };
+// Merge an activity event into the ordered timeline (keyed by id).
+function applyActivity(m: ChatMessage, e: ActivityEvent): ChatMessage {
+  const items: ActivityItem[] = [...(m.activity ?? [])];
+  const idx = items.findIndex((i) => i.id === e.id);
+  if (idx < 0) {
+    items.push({ id: e.id, kind: e.kind ?? "tool", tool: e.tool, label: e.label ?? "", state: e.state ?? "running", detail: e.detail, server: e.server, name: e.name });
+  } else {
+    const cur = items[idx];
+    items[idx] = { ...cur, kind: e.kind ?? cur.kind, tool: e.tool ?? cur.tool, label: e.label ?? cur.label, state: e.state ?? cur.state, detail: e.detail ?? cur.detail, server: e.server ?? cur.server, name: e.name ?? cur.name };
   }
-  if (e.phase === "list-start" || e.phase === "list-error") return m;
-
-  const calls = [...(m.mcpCalls ?? [])];
-  const idx = () => (e.id ? calls.findIndex((c) => c.id === e.id) : -1);
-  const ensure = (): number => {
-    let i = idx();
-    if (i < 0) { calls.push({ id: e.id ?? null, server: e.server ?? "MCP", name: e.name ?? "tool", arguments: null, argsStream: "", output: null, status: "running" }); i = calls.length - 1; }
-    return i;
-  };
-
-  if (e.phase === "start" || e.phase === "detail-start") {
-    const i = ensure();
-    calls[i] = { ...calls[i], server: e.server ?? calls[i].server, name: e.name ?? calls[i].name, arguments: e.arguments ?? calls[i].arguments, status: "running" };
-  } else if (e.phase === "args-delta") {
-    const i = ensure();
-    calls[i] = { ...calls[i], argsStream: (calls[i].argsStream ?? "") + (e.delta ?? ""), status: "running" };
-  } else if (e.phase === "args-done") {
-    const i = ensure();
-    calls[i] = { ...calls[i], arguments: e.arguments ?? calls[i].argsStream ?? null };
-  } else if (e.phase === "detail-end" || e.phase === "end") {
-    const i = ensure();
-    calls[i] = { ...calls[i], server: e.server ?? calls[i].server, name: e.name ?? calls[i].name, arguments: e.arguments ?? calls[i].arguments ?? calls[i].argsStream ?? null, output: e.output ?? calls[i].output, status: "done" };
-  } else if (e.phase === "error") {
-    const i = idx(); if (i >= 0) calls[i] = { ...calls[i], status: "error" };
-  }
-  return { ...m, mcpCalls: calls };
+  return { ...m, activity: items };
 }

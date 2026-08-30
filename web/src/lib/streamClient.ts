@@ -4,19 +4,11 @@ import type { AttachedImage } from "./types";
 
 export interface ChatImagePart { type: "image"; mimeType: string; b64: string; alt: string; }
 export interface CitationEvent { kind: string; title: string; url?: string | null; filename?: string | null; }
-export interface McpEvent {
-  phase: string;                 // start | end | error | detail-start | detail-end | list | list-start | list-error | args-delta | args-done
-  id?: string | null;
-  server?: string | null;
-  name?: string;
-  arguments?: string | null;
-  output?: string | null;
-  delta?: string;                // for args-delta
-  tools?: string[] | null;       // for list
-}
+export interface McpEvent { phase: string; id?: string | null; server?: string | null; name?: string; arguments?: string | null; output?: string | null; delta?: string; tools?: string[] | null; }
+export interface ActivityEvent { id: string; kind?: "thinking" | "tool" | "generating"; tool?: string; label?: string; state?: "running" | "done" | "error"; detail?: string; server?: string; name?: string; }
 export interface UsageEvent { inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; reasoningTokens?: number | null; cachedTokens?: number | null; exact: boolean; }
 export interface OutMessage { role: string; content: string; images?: { dataUrl: string }[]; }
-export interface StreamHandlers { onToken:(d:string)=>void; onImage:(i:ChatImagePart)=>void; onReasoning:(d:string)=>void; onCitation:(c:CitationEvent)=>void; onMcp:(m:McpEvent)=>void; onUsage:(u:UsageEvent)=>void; onDone:()=>void; onError:(m:string)=>void; }
+export interface StreamHandlers { onToken:(d:string)=>void; onImage:(i:ChatImagePart)=>void; onReasoning:(d:string)=>void; onCitation:(c:CitationEvent)=>void; onMcp:(m:McpEvent)=>void; onActivity:(a:ActivityEvent)=>void; onUsage:(u:UsageEvent)=>void; onDone:()=>void; onError:(m:string)=>void; }
 
 async function authHeaders(p: ConnectionProfile): Promise<Record<string, string>> {
   const h: Record<string, string> = { "Content-Type": "application/json" };
@@ -69,6 +61,7 @@ export async function streamChat(messages: OutMessage[], systemPrompt: string | 
           else if (event === "reasoning") handlers.onReasoning(parsed.delta ?? "");
           else if (event === "citation") handlers.onCitation(parsed as CitationEvent);
           else if (event === "mcp") handlers.onMcp(parsed as McpEvent);
+          else if (event === "activity") handlers.onActivity(parsed as ActivityEvent);
           else if (event === "usage") { usageSeen = true; handlers.onUsage(parsed as UsageEvent); }
           else if (event === "done") { if (!usageSeen) handlers.onUsage({ inputTokens: estimateTokens(String(inputChars)), outputTokens: estimateTokens(String(outputChars)), totalTokens: null, exact: false }); finished = true; handlers.onDone(); return; }
           else if (event === "error") { finished = true; handlers.onError(parsed.message ?? "Error"); return; }

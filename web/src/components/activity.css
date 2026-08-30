@@ -1,0 +1,18 @@
+/* Activity timeline + live status (patch add-on). */
+.live-status { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text-2); margin:0 0 8px; }
+.live-ico { font-size:14px; }
+.live-dot { display:inline-flex; gap:3px; }
+.live-dot i { width:5px; height:5px; border-radius:50%; background:var(--brand-2); animation:blink 1.2s infinite both; }
+.live-dot i:nth-child(2){animation-delay:.2s;} .live-dot i:nth-child(3){animation-delay:.4s;}
+.activity-panel { border-color:#3a3550; }
+.activity-body { display:flex; flex-direction:column; gap:2px; }
+.act-item { display:flex; gap:8px; align-items:flex-start; padding:5px 4px; border-left:2px solid var(--stroke); margin-left:4px; }
+.act-item.running { border-left-color:#f59e0b; }
+.act-item.done { border-left-color:#22c55e; }
+.act-item.error { border-left-color:var(--danger); }
+.act-ico { font-size:14px; line-height:1.4; }
+.act-main { flex:1; min-width:0; }
+.act-label { font-size:12.5px; color:var(--text); display:flex; align-items:center; gap:6px; }
+.act-server { color:var(--text-2); font-size:11px; }
+.act-state { margin-left:auto; color:var(--text-2); font-size:11px; }
+.act-detail { margin:4px 0 0; padding:6px 8px; background:#0b0d13; border-radius:6px; font-size:11px; white-space:pre-wrap; word-break:break-word; color:#a7d8e8; font-family:"Cascadia Code",monospace; }

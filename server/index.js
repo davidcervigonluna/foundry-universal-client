@@ -6,14 +6,15 @@ import { fileURLToPath } from "node:url";
 import { proxyChat, readConnection, sse } from "./foundryProxy.js";
 import { listDeployments, listAgents } from "./discovery.js";
 import { requireAuth, isAuthEnabled } from "./authMiddleware.js";
+import { log, LOG_LEVEL } from "./logger.js";
 const __dirname=path.dirname(fileURLToPath(import.meta.url));const app=express();const PORT=process.env.PORT||8080;
 app.use(cors());app.use(express.json({limit:"25mb"}));
 app.get("/api/health",(_q,res)=>res.json({ok:true}));
 app.get("/api/config",(_q,res)=>res.json({authEnabled:isAuthEnabled}));
 const auth=requireAuth();
-app.post("/api/test",auth,async(req,res)=>{try{const conn=readConnection(req);res.json({ok:true,endpoint:conn.endpoint,mode:conn.authMode});}catch(err){res.status(err.status||500).json({ok:false,error:err.message});}});
+app.post("/api/test",auth,async(req,res)=>{try{const conn=readConnection(req);log.info("core",`test connection endpoint=${conn.endpoint} mode=${conn.authMode}`);res.json({ok:true,endpoint:conn.endpoint,mode:conn.authMode});}catch(err){log.warn("core",`test failed: ${err.message}`);res.status(err.status||500).json({ok:false,error:err.message});}});
 app.post("/api/deployments",auth,async(req,res)=>{try{res.json({ok:true,deployments:await listDeployments(req)});}catch(err){res.status(err.status||500).json({ok:false,error:err.message});}});
 app.post("/api/agents",auth,async(req,res)=>{try{res.json({ok:true,agents:await listAgents(req)});}catch(err){res.status(err.status||500).json({ok:false,error:err.message});}});
-app.post("/api/chat/stream",auth,async(req,res)=>{try{await proxyChat(req,res,req.body||{});}catch(err){if(!res.headersSent)res.status(err.status||500).json({error:err.message});else{sse(res,"error",{message:err.message});res.end();}}});
+app.post("/api/chat/stream",auth,async(req,res)=>{try{await proxyChat(req,res,req.body||{});}catch(err){log.warn("core",`chat/stream error: ${err.message}`);if(!res.headersSent)res.status(err.status||500).json({error:err.message});else{sse(res,"error",{message:err.message});res.end();}}});
 if(String(process.env.SERVE_STATIC).toLowerCase()==="true"){const dist=path.resolve(__dirname,"../web/dist");app.use(express.static(dist));app.get("*",(_q,res)=>res.sendFile(path.join(dist,"index.html")));}
-app.listen(PORT,()=>console.log(`BFF on http://localhost:${PORT}  (auth=${isAuthEnabled})`));
+app.listen(PORT,()=>{log.info("core",`BFF on http://localhost:${PORT} (auth=${isAuthEnabled}, LOG_LEVEL=${LOG_LEVEL})`);});
