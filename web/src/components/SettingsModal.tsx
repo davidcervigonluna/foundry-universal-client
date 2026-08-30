@@ -1,0 +1,15 @@
+import { useState, useEffect } from "react";
+import { type ConnectionProfile, saveActive, loadActive, listSaved, saveToList, removeFromList, validateProject } from "../lib/connectionProfile";
+import { testConnection } from "../lib/streamClient";
+interface Props { open: boolean; onClose: () => void; onSaved: () => void; }
+const EMPTY: ConnectionProfile = { label:"", kind:"project", endpoint:"", apiVersion:"v1", authMode:"entra-login", dest:"playground", model:"", api:"responses" };
+export function SettingsModal({ open, onClose, onSaved }: Props) {
+  const [form,setForm]=useState<ConnectionProfile>(EMPTY);const[errors,setErrors]=useState<string[]>([]);const[testMsg,setTestMsg]=useState("");const[saved,setSaved]=useState<ConnectionProfile[]>([]);
+  useEffect(()=>{if(open){const a=loadActive();setForm(a&&a.kind==="project"?a:EMPTY);setSaved(listSaved());setErrors([]);setTestMsg("");}},[open]);
+  if(!open)return null;
+  const set=(k:keyof ConnectionProfile,v:string)=>setForm(f=>({...f,[k]:v}));
+  const onTest=async()=>{const e=validateProject(form);setErrors(e);if(e.length)return;setTestMsg("Testing…");const r=await testConnection(form);setTestMsg(r.ok?"✅ Connection valid":`❌ ${r.error}`);};
+  const onSubmit=()=>{const e=validateProject(form);setErrors(e);if(e.length)return;saveActive({...form,authMode:"entra-login"});if(form.label)saveToList(form);onSaved();onClose();};
+  const loadProfile=(p:ConnectionProfile)=>setForm({...EMPTY,...p,authMode:"entra-login"});
+  return(<div className="modal-backdrop" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}><h2>⚙️ Settings · Project</h2><p className="hint">Configure the Foundry project. Models and agents are discovered automatically. Authentication uses your Entra identity (delegated RBAC).</p>{saved.length>0&&(<div className="saved-list"><label>Saved profiles</label><div className="chips">{saved.map(p=>(<span key={p.label} className="chip"><button onClick={()=>loadProfile(p)}>🗂 {p.label}</button><button className="chip-x" onClick={()=>{removeFromList(p.label);setSaved(listSaved());}}>×</button></span>))}</div></div>)}<label>Profile name</label><input value={form.label} onChange={e=>set("label",e.target.value)} placeholder="My project · Prod" /><label>Project endpoint</label><input value={form.endpoint} onChange={e=>set("endpoint",e.target.value)} placeholder="https://<res>.services.ai.azure.com/api/projects/<proj>" /><label>api-version</label><input value={form.apiVersion} onChange={e=>set("apiVersion",e.target.value)} placeholder="v1" /><p className="mode-note ok">✅ Identity: your Entra sign-in. Foundry applies your individual RBAC.</p>{errors.length>0&&<ul className="errors">{errors.map(e=><li key={e}>{e}</li>)}</ul>}{testMsg&&<p className="test-msg">{testMsg}</p>}<div className="modal-actions"><button className="btn-secondary" onClick={onTest}>Test connection</button><div style={{flex:1}} /><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={onSubmit}>Save & use</button></div></div></div>);
+}

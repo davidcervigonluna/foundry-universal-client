@@ -1,0 +1,7 @@
+/* Styles for MCP tools discovery + streamed arguments (patch add-on). */
+.mcp-tools-panel { border-color:#5a4a20; }
+.mcp-tools-group { margin:6px 0; }
+.mcp-tools-server { font-size:11px; color:var(--text-2); margin-bottom:4px; font-weight:600; }
+.mcp-tools-list { display:flex; flex-wrap:wrap; gap:6px; }
+.mcp-tool-chip { font-size:11.5px; background:var(--bg-2); border:1px solid var(--stroke); border-radius:999px; padding:3px 9px; color:#d9c58a; }
+.mcp-args { color:#a7d8e8 !important; }

@@ -1,0 +1,6 @@
+services:
+  app:
+    build: { context: . }
+    ports: ["8080:8080"]
+    environment: { PORT: 8080, SERVE_STATIC: "true", ALLOWED_HOST_SUFFIXES: ".services.ai.azure.com,.openai.azure.com,.cognitiveservices.azure.com", AUTH_ENABLED: "false", DEBUG_STREAM: "false" }
+    restart: unless-stopped
