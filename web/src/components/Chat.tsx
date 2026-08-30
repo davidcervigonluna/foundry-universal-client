@@ -34,8 +34,8 @@ export function Chat({ ready, readyHint, conversationId, initialMessages, system
         onToken: (d) => patch(assistantId, (m) => ({ ...m, content: m.content + d })),
         onImage: (img: ChatImagePart) => patch(assistantId, (m) => ({ ...m, images: [...(m.images ?? []), img] })),
         onReasoning: (d) => patch(assistantId, (m) => ({ ...m, reasoning: (m.reasoning ?? "") + d })),
-        onCitation: (c: CitationEvent) => patch(assistantId, (m) => ({ ...m, citations: [...(m.citations ?? []), { kind: c.kind, title: c.title, url: c.url, filename: c.filename }] })),
-        onMcp: (_e: McpEvent) => {}, // timeline is driven by activity events
+        onCitation: (c: CitationEvent) => patch(assistantId, (m) => ({ ...m, citations: [...(m.citations ?? []), { kind: c.kind, title: c.title, url: c.url, filename: c.filename, fileId: c.fileId, quote: c.quote, replace: c.replace }] })),
+        onMcp: (_e: McpEvent) => {},
         onActivity: (e: ActivityEvent) => patch(assistantId, (m) => applyActivity(m, e)),
         onUsage: (u: UsageEvent) => patch(assistantId, (m) => ({ ...m, usage: { ...u } })),
         onDone: () => {}, onError: (msg) => patch(assistantId, (m) => ({ ...m, content: `⚠️ ${msg}`, error: true })),
@@ -49,7 +49,7 @@ export function Chat({ ready, readyHint, conversationId, initialMessages, system
     <div className="chat">
       <div className="messages" onDragOver={(e) => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={onDrop}>
         {dragOver && <div className="drop-overlay">Drop images here 📎</div>}
-        {messages.length === 0 && (<div className="empty"><h3>👋 Start chatting</h3><p>You'll see a live 🧭 activity timeline (thinking, tools, searching), 📎 sources and 🎫 tokens.</p></div>)}
+        {messages.length === 0 && (<div className="empty"><h3>👋 Start chatting</h3><p>You'll see a live 🧭 activity timeline, inline 📎 citations and 🎫 tokens.</p></div>)}
         {messages.map((m, i) => (<Message key={m.id} message={m} isStreaming={streaming && i === messages.length - 1 && m.role === "assistant"} />))}
         <div ref={bottomRef} />
       </div>
@@ -64,15 +64,10 @@ export function Chat({ ready, readyHint, conversationId, initialMessages, system
   );
 }
 
-// Merge an activity event into the ordered timeline (keyed by id).
 function applyActivity(m: ChatMessage, e: ActivityEvent): ChatMessage {
   const items: ActivityItem[] = [...(m.activity ?? [])];
   const idx = items.findIndex((i) => i.id === e.id);
-  if (idx < 0) {
-    items.push({ id: e.id, kind: e.kind ?? "tool", tool: e.tool, label: e.label ?? "", state: e.state ?? "running", detail: e.detail, server: e.server, name: e.name });
-  } else {
-    const cur = items[idx];
-    items[idx] = { ...cur, kind: e.kind ?? cur.kind, tool: e.tool ?? cur.tool, label: e.label ?? cur.label, state: e.state ?? cur.state, detail: e.detail ?? cur.detail, server: e.server ?? cur.server, name: e.name ?? cur.name };
-  }
+  if (idx < 0) { items.push({ id: e.id, kind: e.kind ?? "tool", tool: e.tool, label: e.label ?? "", state: e.state ?? "running", detail: e.detail, server: e.server, name: e.name }); }
+  else { const cur = items[idx]; items[idx] = { ...cur, kind: e.kind ?? cur.kind, tool: e.tool ?? cur.tool, label: e.label ?? cur.label, state: e.state ?? cur.state, detail: e.detail ?? cur.detail, server: e.server ?? cur.server, name: e.name ?? cur.name }; }
   return { ...m, activity: items };
 }

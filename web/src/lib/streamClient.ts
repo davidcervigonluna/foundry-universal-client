@@ -3,7 +3,7 @@ import { getFoundryUserToken } from "./entraAuth";
 import type { AttachedImage } from "./types";
 
 export interface ChatImagePart { type: "image"; mimeType: string; b64: string; alt: string; }
-export interface CitationEvent { kind: string; title: string; url?: string | null; filename?: string | null; }
+export interface CitationEvent { kind: string; title: string; url?: string | null; filename?: string | null; fileId?: string | null; quote?: string | null; replace?: string | null; }
 export interface McpEvent { phase: string; id?: string | null; server?: string | null; name?: string; arguments?: string | null; output?: string | null; delta?: string; tools?: string[] | null; }
 export interface ActivityEvent { id: string; kind?: "thinking" | "tool" | "generating"; tool?: string; label?: string; state?: "running" | "done" | "error"; detail?: string; server?: string; name?: string; }
 export interface UsageEvent { inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; reasoningTokens?: number | null; cachedTokens?: number | null; exact: boolean; }

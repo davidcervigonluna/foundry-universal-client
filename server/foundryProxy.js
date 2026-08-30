@@ -6,7 +6,7 @@ const KNOWN_LIFECYCLE = new Set([
   "response.created", "response.in_progress", "response.queued",
   "response.output_item.added", "response.output_item.done",
   "response.content_part.added", "response.content_part.done",
-  "response.output_text.done", "response.output_text.annotation.added",
+  "response.output_text.done",
   "response.reasoning_summary_part.added", "response.reasoning_summary_part.done",
   "response.reasoning_summary_text.done", "response.reasoning_text.done",
   "response.mcp_call.in_progress",
@@ -26,7 +26,6 @@ export function sse(res, event, data) {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
   if (typeof res.flush === "function") res.flush();
 }
-// Emit a unified timeline "activity" step.
 function activity(res, obj) { sse(res, "activity", obj); }
 
 export function readConnection(req) {
@@ -85,6 +84,25 @@ function markGenerating(res, state) { if (!state.generatingStarted) { state.gene
 function emitTextIfMissing(res, state, text) { if (text && !state.textStreamed) { state.textStreamed = true; markGenerating(res, state); sse(res, "token", { delta: text }); } }
 function emitUsage(res, state, usage) { if (!usage || state.usageSent) return; state.usageSent = true; const u = { inputTokens: usage.input_tokens ?? usage.prompt_tokens ?? null, outputTokens: usage.output_tokens ?? usage.completion_tokens ?? null, totalTokens: usage.total_tokens ?? null, reasoningTokens: usage.output_tokens_details?.reasoning_tokens ?? usage.completion_tokens_details?.reasoning_tokens ?? null, cachedTokens: usage.input_tokens_details?.cached_tokens ?? null, exact: true }; log.info("upstream", `[${state.rid}] usage in=${u.inputTokens} out=${u.outputTokens} total=${u.totalTokens}${u.reasoningTokens ? ` reasoning=${u.reasoningTokens}` : ""}`); sse(res, "usage", u); }
 
+// ---- Citation: emit full metadata incl. placeholder to replace inline ----
+function emitCitation(res, a) {
+  if (!a) return;
+  const kind = a.type || "url_citation";
+  const title = a.title || a.filename || a.url || (a.file_id ? `File ${a.file_id}` : "Source");
+  // Placeholder that appears in the answer text, e.g. 【4:0†source】
+  const replace = a.text || a.text_to_replace || null;
+  sse(res, "citation", {
+    kind, title,
+    url: a.url || null,
+    filename: a.filename || null,
+    fileId: a.file_id || a.file_path || null,
+    quote: a.quote || null,
+    replace,
+    startIndex: (a.start_index ?? null),
+    endIndex: (a.end_index ?? null),
+  });
+}
+
 function toResponsesInput(messages) {
   if (!Array.isArray(messages)) return messages;
   return messages.map((m) => { const isAssistant = m.role === "assistant"; const textType = isAssistant ? "output_text" : "input_text"; const parts = []; if (m.content) parts.push({ type: textType, text: m.content }); if (!isAssistant && Array.isArray(m.images)) for (const img of m.images) parts.push({ type: "input_image", image_url: img.dataUrl }); if (parts.length === 0) parts.push({ type: textType, text: "" }); return { role: m.role, content: parts }; });
@@ -92,7 +110,7 @@ function toResponsesInput(messages) {
 function extractFromCompleted(response, res, state) {
   const out = response?.output; if (!Array.isArray(out)) return;
   for (const item of out) { if (!item || typeof item !== "object") continue; const it = item.type || "";
-    if (it === "message" && Array.isArray(item.content)) { for (const part of item.content) { const pt = part?.type || ""; if ((pt === "output_text" || pt === "text") && part.text) emitTextIfMissing(res, state, part.text); else if (pt === "refusal" && part.refusal) emitTextIfMissing(res, state, part.refusal); else if ((pt === "output_image" || pt === "image") && !state.imageEmitted) emitImage(res, state, part.image_base64 || part.b64_json || part.result, part.mime_type, part.alt); } }
+    if (it === "message" && Array.isArray(item.content)) { for (const part of item.content) { const pt = part?.type || ""; if ((pt === "output_text" || pt === "text") && part.text) { emitTextIfMissing(res, state, part.text); if (Array.isArray(part.annotations)) for (const a of part.annotations) emitCitation(res, a); } else if (pt === "refusal" && part.refusal) emitTextIfMissing(res, state, part.refusal); else if ((pt === "output_image" || pt === "image") && !state.imageEmitted) emitImage(res, state, part.image_base64 || part.b64_json || part.result, part.mime_type, part.alt); } }
     else if (it === "image_generation_call" && !state.imageEmitted) emitImage(res, state, item.result || item.b64_json, mimeFromFormat(item.output_format), "Generated image");
     else if (it === "output_text" && item.text) emitTextIfMissing(res, state, item.text);
     else if (it === "reasoning" && Array.isArray(item.summary)) { const t = item.summary.map((s) => s.text || "").join(""); if (t) sse(res, "reasoning", { delta: t }); }
@@ -105,29 +123,16 @@ function parseResponsesEvent(evt, res, state) {
   if (!evt || typeof evt !== "object") return; const type = evt.type || "";
   log.trace("stream", `[${state.rid}] event ${type}`, evt);
 
-  // ---- Text / reasoning ----
   if (type.endsWith("output_text.delta") && typeof evt.delta === "string") { state.textStreamed = true; markGenerating(res, state); sse(res, "token", { delta: evt.delta }); return; }
   if (type.endsWith("output_text.done") && typeof evt.text === "string") { emitTextIfMissing(res, state, evt.text); return; }
-  if (type.includes("reasoning") && type.endsWith(".delta")) {
-    if (!state.thinkingStarted) { state.thinkingStarted = true; activity(res, { id: "think", kind: "thinking", tool: "thinking", label: "Thinking", state: "running" }); }
-    if (typeof evt.delta === "string") sse(res, "reasoning", { delta: evt.delta });
-    return;
-  }
-  if (type.endsWith("annotation.added") && evt.annotation) { const a = evt.annotation; sse(res, "citation", { kind: a.type || "url_citation", title: a.title || a.filename || a.url || "Source", url: a.url || null, filename: a.filename || null }); return; }
+  if (type.includes("reasoning") && type.endsWith(".delta")) { if (!state.thinkingStarted) { state.thinkingStarted = true; activity(res, { id: "think", kind: "thinking", tool: "thinking", label: "Thinking", state: "running" }); } if (typeof evt.delta === "string") sse(res, "reasoning", { delta: evt.delta }); return; }
 
-  // ---- Native agent tools: web_search / file_search / code_interpreter / computer ----
+  // Citations (inline annotations)
+  if (type.endsWith("annotation.added") && evt.annotation) { emitCitation(res, evt.annotation); return; }
+
   const tm = type.match(/(web_search|file_search|code_interpreter|computer)_call\.([a-z_.]+)/i);
-  if (tm) {
-    const tool = tm[1].toLowerCase(); const sub = tm[2].toLowerCase();
-    const id = evt.item_id || evt.id || `${tool}`;
-    const label = NATIVE_TOOL_LABEL[tool] || "Using tool";
-    if (sub === "in_progress" || sub === "searching" || sub === "interpreting" || sub.startsWith("code")) { activity(res, { id, kind: "tool", tool, label, state: "running" }); }
-    else if (sub === "completed" || sub === "done") { activity(res, { id, state: "done" }); }
-    else if (sub === "failed") { activity(res, { id, state: "error" }); }
-    return;
-  }
+  if (tm) { const tool = tm[1].toLowerCase(); const sub = tm[2].toLowerCase(); const id = evt.item_id || evt.id || `${tool}`; const label = NATIVE_TOOL_LABEL[tool] || "Using tool"; if (sub === "in_progress" || sub === "searching" || sub === "interpreting" || sub.startsWith("code")) { activity(res, { id, kind: "tool", tool, label, state: "running" }); } else if (sub === "completed" || sub === "done") { activity(res, { id, state: "done" }); } else if (sub === "failed") { activity(res, { id, state: "error" }); } return; }
 
-  // ---- MCP ----
   if (type.includes("mcp_list_tools")) {
     if (type.endsWith("in_progress")) { activity(res, { id: "mcp-list", kind: "tool", tool: "mcp", label: "Discovering MCP tools", state: "running" }); return; }
     if (type.endsWith("completed") || type.endsWith("done")) { const item = evt.item || {}; const tools = Array.isArray(item.tools) ? item.tools.map((t) => t?.name || t) : (Array.isArray(evt.tools) ? evt.tools.map((t) => t?.name || t) : null); const server = item.server_label || item.server || evt.server_label || null; log.info("stream", `[${state.rid}] mcp tools discovered: ${tools ? tools.join(", ") : "?"} (server=${server || "?"})`); sse(res, "mcp", { phase: "list", id: evt.item_id || item.id || null, server, tools }); activity(res, { id: "mcp-list", kind: "tool", tool: "mcp", label: `Discovered ${tools ? tools.length : 0} MCP tool(s)`, detail: tools ? tools.join(", ") : undefined, state: "done" }); return; }
@@ -135,34 +140,25 @@ function parseResponsesEvent(evt, res, state) {
   }
   if (type.endsWith("mcp_call_arguments.delta")) { if (typeof evt.delta === "string") sse(res, "mcp", { phase: "args-delta", id: evt.item_id || evt.id || null, delta: evt.delta }); return; }
   if (type.endsWith("mcp_call_arguments.done")) { const args = typeof evt.arguments === "string" ? evt.arguments : (evt.arguments ? JSON.stringify(evt.arguments) : null); log.info("stream", `[${state.rid}] mcp args done: ${args}`); sse(res, "mcp", { phase: "args-done", id: evt.item_id || evt.id || null, arguments: args }); activity(res, { id: `mcp:${evt.item_id || evt.id}`, detail: args }); return; }
-  if (type.includes("mcp_call")) {
-    if (type.endsWith("in_progress")) { const id = evt.item_id || evt.id || null; log.info("stream", `[${state.rid}] mcp call start id=${id || "?"}`); sse(res, "mcp", { phase: "start", id }); activity(res, { id: `mcp:${id}`, kind: "tool", tool: "mcp", label: "Calling MCP tool", state: "running" }); return; }
-    if (type.endsWith("completed") || type.endsWith("done")) { const id = evt.item_id || evt.id || null; sse(res, "mcp", { phase: "end", id }); activity(res, { id: `mcp:${id}`, state: "done" }); return; }
-    if (type.endsWith("failed")) { const id = evt.item_id || evt.id || null; sse(res, "mcp", { phase: "error", id }); activity(res, { id: `mcp:${id}`, state: "error" }); return; }
-  }
+  if (type.includes("mcp_call")) { if (type.endsWith("in_progress")) { const id = evt.item_id || evt.id || null; log.info("stream", `[${state.rid}] mcp call start id=${id || "?"}`); sse(res, "mcp", { phase: "start", id }); activity(res, { id: `mcp:${id}`, kind: "tool", tool: "mcp", label: "Calling MCP tool", state: "running" }); return; } if (type.endsWith("completed") || type.endsWith("done")) { const id = evt.item_id || evt.id || null; sse(res, "mcp", { phase: "end", id }); activity(res, { id: `mcp:${id}`, state: "done" }); return; } if (type.endsWith("failed")) { const id = evt.item_id || evt.id || null; sse(res, "mcp", { phase: "error", id }); activity(res, { id: `mcp:${id}`, state: "error" }); return; } }
 
-  // ---- Images ----
   if (type.endsWith("image_generation.completed") || type === "image_generation.completed") { emitImage(res, state, evt.b64_json || evt.result, mimeFromFormat(evt.output_format), "Generated image"); if (evt.usage) emitUsage(res, state, evt.usage); return; }
   if (type.endsWith("image_generation.partial_image") || type === "image_generation.partial_image") { emitImage(res, state, evt.b64_json, mimeFromFormat(evt.output_format), "Image (progressive)"); return; }
 
-  // ---- Output items ----
   if (type.endsWith("output_item.added") || type.endsWith("output_item.done")) { const item = evt.item || {}; const itype = item.type || "";
     if (itype === "mcp_call") { const id = item.id || null; sse(res, "mcp", { phase: type.endsWith("done") ? "detail-end" : "detail-start", id, server: item.server_label || item.server || "MCP", name: item.name || item.tool_name || "tool", arguments: item.arguments ?? null, output: item.output ?? null }); activity(res, { id: `mcp:${id}`, kind: "tool", tool: "mcp", label: item.name ? `Calling MCP: ${item.name}` : "Calling MCP tool", server: item.server_label || item.server || undefined, name: item.name || undefined, detail: item.arguments ?? undefined, state: type.endsWith("done") ? "done" : "running" }); return; }
     if (itype === "reasoning" && Array.isArray(item.summary)) { const t = item.summary.map((s) => s.text || "").join(""); if (t) sse(res, "reasoning", { delta: t }); return; }
     if (itype === "image_generation_call" && (item.result || item.b64_json)) { emitImage(res, state, item.result || item.b64_json, mimeFromFormat(item.output_format), "Generated image"); return; }
-    // Native tool items: capture query/results if present
     if (/(web_search|file_search|code_interpreter|computer)_call/.test(itype)) { const tool = itype.replace(/_call$/, ""); const label = NATIVE_TOOL_LABEL[tool] || "Using tool"; const q = item.query || item.action?.query || (Array.isArray(item.queries) ? item.queries.join(", ") : undefined); const nres = Array.isArray(item.results) ? item.results.length : undefined; const detail = [q ? `query: ${q}` : null, nres != null ? `${nres} result(s)` : null].filter(Boolean).join(" · ") || undefined; activity(res, { id: item.id || tool, kind: "tool", tool, label, detail, state: type.endsWith("done") ? "done" : "running" }); return; }
-    if (itype === "message" && Array.isArray(item.content) && type.endsWith(".done")) { for (const part of item.content) { const pt = part?.type || ""; if ((pt === "output_text" || pt === "text") && part.text) emitTextIfMissing(res, state, part.text); else if (pt === "output_image" || pt === "image") emitImage(res, state, part.image_base64 || part.b64_json || part.result, part.mime_type, part.alt); } return; }
+    if (itype === "message" && Array.isArray(item.content) && type.endsWith(".done")) { for (const part of item.content) { const pt = part?.type || ""; if ((pt === "output_text" || pt === "text") && part.text) { emitTextIfMissing(res, state, part.text); if (Array.isArray(part.annotations)) for (const a of part.annotations) emitCitation(res, a); } else if (pt === "output_image" || pt === "image") emitImage(res, state, part.image_base64 || part.b64_json || part.result, part.mime_type, part.alt); } return; }
     return;
   }
-  if (type.endsWith("content_part.added") || type.endsWith("content_part.done")) { const part = evt.part || {}; const pt = part.type || ""; if ((pt === "output_text" || pt === "text") && part.text) emitTextIfMissing(res, state, part.text); else if (pt === "output_image" || pt === "image") emitImage(res, state, part.image_base64 || part.b64_json || part.result, part.mime_type, part.alt); return; }
+  if (type.endsWith("content_part.added") || type.endsWith("content_part.done")) { const part = evt.part || {}; const pt = part.type || ""; if ((pt === "output_text" || pt === "text") && part.text) { emitTextIfMissing(res, state, part.text); if (Array.isArray(part.annotations)) for (const a of part.annotations) emitCitation(res, a); } else if (pt === "output_image" || pt === "image") emitImage(res, state, part.image_base64 || part.b64_json || part.result, part.mime_type, part.alt); return; }
 
-  // ---- End ----
   if (type.endsWith("response.completed") || type.endsWith("response.incomplete") || type === "done") { const response = evt.response || {}; extractFromCompleted(response, res, state); emitUsage(res, state, response.usage || evt.usage); if (state.generatingStarted) activity(res, { id: "gen", state: "done" }); sse(res, "done", { finishReason: response.incomplete_details?.reason || "stop" }); return; }
   if (type.endsWith("response.failed") || type === "error") { const msg = evt.response?.error?.message || evt.message || "The response failed."; log.warn("stream", `[${state.rid}] upstream failure event: ${msg}`); sse(res, "error", { message: msg }); return; }
 
-  if (KNOWN_LIFECYCLE.has(type)) { /* benign */ }
-  else { log.warn("stream", `[${state.rid}] UNHANDLED unknown event type=${type}`, evt); }
+  if (KNOWN_LIFECYCLE.has(type)) { /* benign */ } else { log.warn("stream", `[${state.rid}] UNHANDLED unknown event type=${type}`, evt); }
 }
 
 function toChatMessages(messages, systemPrompt) { const out = []; if (systemPrompt) out.push({ role: "system", content: systemPrompt }); for (const m of messages || []) { if (Array.isArray(m.images) && m.images.length && m.role === "user") { const parts = []; if (m.content) parts.push({ type: "text", text: m.content }); for (const img of m.images) parts.push({ type: "image_url", image_url: { url: img.dataUrl } }); out.push({ role: m.role, content: parts }); } else { out.push({ role: m.role, content: m.content ?? "" }); } } return out; }

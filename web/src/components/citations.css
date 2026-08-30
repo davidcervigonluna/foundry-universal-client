@@ -1,0 +1,10 @@
+/* Inline citation markers + footnotes (patch add-on). */
+.cite-ref { color:var(--brand-2); text-decoration:none; font-weight:600; }
+.cite-ref:hover { text-decoration:underline; }
+.cite-ref sup { font-size:0.7em; }
+.cite-list { margin:0; padding-left:0; list-style:none; }
+.cite-item { display:block; font-size:12.5px; margin:5px 0; padding-left:2px; scroll-margin-top:80px; }
+.cite-item:target { background:#2a2350; border-radius:6px; padding:4px 6px; }
+.cite-ico { margin-right:6px; }
+.cite-item a { color:var(--brand-2); }
+.cite-quote { color:var(--text-2); font-size:11.5px; margin:2px 0 0 22px; font-style:italic; }
